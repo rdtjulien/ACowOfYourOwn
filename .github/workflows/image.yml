@@ -1,0 +1,50 @@
+# Build the cow image, and publish it when it reaches main.
+#
+# Two triggers, one file. That difference is the whole lesson:
+#   - a pull request BUILDS, to prove the image still assembles;
+#   - a push to main BUILDS AND PUBLISHES, because that one is real.
+name: image
+
+on:
+  pull_request:
+  push:
+    # Both names, so this works whatever your default branch is called.
+    branches: [main, master]
+
+permissions:
+  contents: read
+  packages: write        # without this the publish step fails with a 403
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io rejects uppercase, and GitHub usernames keep their case.
+      - name: Work out the image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to the registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          # On a pull request this is false: the image is built and thrown away.
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ steps.name.outputs.image }}:latest
+            ${{ steps.name.outputs.image }}:${{ github.sha }}
+          # One line, two architectures. It is not free: the build gets slower.
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
